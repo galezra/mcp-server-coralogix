@@ -34,6 +34,8 @@ WORKDIR /app
 COPY --from=builder /app/build /app/build
 COPY --from=installer /app/node_modules /app/node_modules
 
-# Expose port if needed (Not explicitly mentioned, MCP runs via stdio, so not needed)
+# Environment variables for Coralogix configuration
+ENV CORALOGIX_API_KEY=""
+ENV CORALOGIX_REGION="EUROPE"
 
 CMD ["node", "build/index.js"]

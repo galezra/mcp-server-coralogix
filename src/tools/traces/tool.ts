@@ -1,72 +1,56 @@
 import { ExtendedTool, ToolHandlers } from '../../utils/types'
-import { v2 } from '@datadog/datadog-api-client'
 import { createToolSchema } from '../../utils/tool'
-import { ListTracesZodSchema } from './schema'
+import { SearchTracesZodSchema } from './schema'
+import { TracesApiClient } from '../../utils/coralogix'
 
-type TracesToolName = 'list_traces'
+type TracesToolName = 'search_traces'
 type TracesTool = ExtendedTool<TracesToolName>
 
 export const TRACES_TOOLS: TracesTool[] = [
   createToolSchema(
-    ListTracesZodSchema,
-    'list_traces',
-    'Get APM traces from Datadog',
+    SearchTracesZodSchema,
+    'search_traces',
+    'Search and retrieve traces from Coralogix',
   ),
 ] as const
 
 type TracesToolHandlers = ToolHandlers<TracesToolName>
 
 export const createTracesToolHandlers = (
-  apiInstance: v2.SpansApi,
-): TracesToolHandlers => {
-  return {
-    list_traces: async (request) => {
-      const {
-        query,
-        from,
-        to,
-        limit = 100,
-        sort = '-timestamp',
-        service,
-        operation,
-      } = ListTracesZodSchema.parse(request.params.arguments)
+  apiClient: TracesApiClient,
+): TracesToolHandlers => ({
+  search_traces: async (request) => {
+    const { query, from, to, limit, service, operation } = SearchTracesZodSchema.parse(
+      request.params.arguments,
+    )
 
-      const response = await apiInstance.listSpans({
-        body: {
-          data: {
-            attributes: {
-              filter: {
-                query: [
-                  query,
-                  ...(service ? [`service:${service}`] : []),
-                  ...(operation ? [`operation:${operation}`] : []),
-                ].join(' '),
-                from: new Date(from * 1000).toISOString(),
-                to: new Date(to * 1000).toISOString(),
-              },
-              sort: sort as 'timestamp' | '-timestamp',
-              page: { limit },
-            },
-            type: 'search_request',
-          },
+    // Add service and operation to the query if provided
+    let finalQuery = query
+    if (service) {
+      finalQuery = `${finalQuery} service:${service}`
+    }
+    if (operation) {
+      finalQuery = `${finalQuery} operation:${operation}`
+    }
+
+    const response = await apiClient.searchTraces({
+      query: finalQuery,
+      from,
+      to,
+      limit,
+    })
+
+    if (!response || !response.traces) {
+      throw new Error('No traces data returned')
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Traces: ${JSON.stringify(response.traces)}`,
         },
-      })
-
-      if (!response.data) {
-        throw new Error('No traces data returned')
-      }
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Traces: ${JSON.stringify({
-              traces: response.data,
-              count: response.data.length,
-            })}`,
-          },
-        ],
-      }
-    },
-  }
-}
+      ],
+    }
+  },
+})

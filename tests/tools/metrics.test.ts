@@ -1,80 +1,58 @@
-import { v1 } from '@datadog/datadog-api-client'
 import { describe, it, expect } from 'vitest'
-import { createDatadogConfig } from '../../src/utils/datadog'
+import { createCoralogixConfig } from '../../src/utils/config'
+import { MetricsApiClient } from '../../src/utils/coralogix'
 import { createMetricsToolHandlers } from '../../src/tools/metrics/tool'
 import { createMockToolRequest } from '../helpers/mock'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from '../helpers/msw'
-import { baseUrl, DatadogToolResponse } from '../helpers/datadog'
+import { baseUrl, CoralogixToolResponse } from '../helpers/coralogix'
 
-const metricsEndpoint = `${baseUrl}/v1/query`
+const metricsEndpoint = `${baseUrl}/metrics/query`
 
 describe('Metrics Tool', () => {
-  if (!process.env.DATADOG_API_KEY || !process.env.DATADOG_APP_KEY) {
-    throw new Error('DATADOG_API_KEY and DATADOG_APP_KEY must be set')
-  }
-
-  const datadogConfig = createDatadogConfig({
-    apiKeyAuth: process.env.DATADOG_API_KEY,
-    appKeyAuth: process.env.DATADOG_APP_KEY,
-    site: process.env.DATADOG_SITE,
+  // Create a mock Coralogix API client
+  const axiosInstance = createCoralogixConfig({
+    apiKey: 'test-api-key',
+    region: 'EUROPE',
   })
+  
+  const apiClient = new MetricsApiClient(axiosInstance)
+  const toolHandlers = createMetricsToolHandlers(apiClient)
 
-  const apiInstance = new v1.MetricsApi(datadogConfig)
-  const toolHandlers = createMetricsToolHandlers(apiInstance)
-
-  // https://docs.datadoghq.com/api/latest/metrics/#query-timeseries-data-across-multiple-products
   describe.concurrent('query_metrics', async () => {
     it('should query metrics data', async () => {
-      const mockHandler = http.get(metricsEndpoint, async () => {
+      const mockHandler = http.post(metricsEndpoint, async () => {
         return HttpResponse.json({
-          status: 'ok',
-          query: 'avg:system.cpu.user{*}',
-          series: [
-            {
-              metric: 'system.cpu.user',
-              display_name: 'system.cpu.user',
-              pointlist: [
-                [1640995000000, 23.45],
-                [1640995060000, 24.12],
-                [1640995120000, 22.89],
-                [1640995180000, 25.67],
-              ],
-              scope: 'host:web-01',
-              expression: 'avg:system.cpu.user{*}',
-              unit: [
-                {
-                  family: 'percentage',
-                  scale_factor: 1,
-                  name: 'percent',
-                  short_name: '%',
+          status: 'success',
+          data: {
+            resultType: 'matrix',
+            result: [
+              {
+                metric: {
+                  __name__: 'system_cpu_user',
+                  host: 'web-01'
                 },
-              ],
-            },
-            {
-              metric: 'system.cpu.user',
-              display_name: 'system.cpu.user',
-              pointlist: [
-                [1640995000000, 18.32],
-                [1640995060000, 19.01],
-                [1640995120000, 17.76],
-                [1640995180000, 20.45],
-              ],
-              scope: 'host:web-02',
-              expression: 'avg:system.cpu.user{*}',
-              unit: [
-                {
-                  family: 'percentage',
-                  scale_factor: 1,
-                  name: 'percent',
-                  short_name: '%',
+                values: [
+                  [1640995000, '23.45'],
+                  [1640995060, '24.12'],
+                  [1640995120, '22.89'],
+                  [1640995180, '25.67'],
+                ]
+              },
+              {
+                metric: {
+                  __name__: 'system_cpu_user',
+                  host: 'web-02'
                 },
-              ],
-            },
-          ],
-          from_date: 1640995000000,
-          to_date: 1641095000000,
-          group_by: ['host'],
+                values: [
+                  [1640995000, '18.32'],
+                  [1640995060, '19.01'],
+                  [1640995120, '17.76'],
+                  [1640995180, '20.45'],
+                ]
+              }
+            ]
+          }
         })
       })
 
@@ -84,16 +62,16 @@ describe('Metrics Tool', () => {
         const request = createMockToolRequest('query_metrics', {
           from: 1640995000,
           to: 1641095000,
-          query: 'avg:system.cpu.user{*}',
+          query: 'system_cpu_user',
         })
         const response = (await toolHandlers.query_metrics(
           request,
-        )) as unknown as DatadogToolResponse
+        )) as unknown as CoralogixToolResponse
 
-        expect(response.content[0].text).toContain('Queried metrics data:')
-        expect(response.content[0].text).toContain('system.cpu.user')
-        expect(response.content[0].text).toContain('host:web-01')
-        expect(response.content[0].text).toContain('host:web-02')
+        expect(response.content[0].text).toContain('Metrics data:')
+        expect(response.content[0].text).toContain('system_cpu_user')
+        expect(response.content[0].text).toContain('web-01')
+        expect(response.content[0].text).toContain('web-02')
         expect(response.content[0].text).toContain('23.45')
       })()
 
@@ -101,13 +79,13 @@ describe('Metrics Tool', () => {
     })
 
     it('should handle empty response', async () => {
-      const mockHandler = http.get(metricsEndpoint, async () => {
+      const mockHandler = http.post(metricsEndpoint, async () => {
         return HttpResponse.json({
-          status: 'ok',
-          query: 'avg:non.existent.metric{*}',
-          series: [],
-          from_date: 1640995000000,
-          to_date: 1641095000000,
+          status: 'success',
+          data: {
+            resultType: 'matrix',
+            result: []
+          }
         })
       })
 
@@ -117,25 +95,24 @@ describe('Metrics Tool', () => {
         const request = createMockToolRequest('query_metrics', {
           from: 1640995000,
           to: 1641095000,
-          query: 'avg:non.existent.metric{*}',
+          query: 'non_existent_metric',
         })
         const response = (await toolHandlers.query_metrics(
           request,
-        )) as unknown as DatadogToolResponse
+        )) as unknown as CoralogixToolResponse
 
-        expect(response.content[0].text).toContain('Queried metrics data:')
-        expect(response.content[0].text).toContain('series":[]')
+        expect(response.content[0].text).toContain('Metrics data:')
+        expect(response.content[0].text).toContain('result":[]')
       })()
 
       server.close()
     })
 
     it('should handle failed query status', async () => {
-      const mockHandler = http.get(metricsEndpoint, async () => {
+      const mockHandler = http.post(metricsEndpoint, async () => {
         return HttpResponse.json({
           status: 'error',
-          message: 'Invalid query format',
-          query: 'invalid:query:format',
+          error: 'Invalid query format'
         })
       })
 
@@ -149,7 +126,7 @@ describe('Metrics Tool', () => {
         })
         const response = (await toolHandlers.query_metrics(
           request,
-        )) as unknown as DatadogToolResponse
+        )) as unknown as CoralogixToolResponse
 
         expect(response.content[0].text).toContain('status":"error"')
         expect(response.content[0].text).toContain('Invalid query format')
@@ -159,9 +136,9 @@ describe('Metrics Tool', () => {
     })
 
     it('should handle authentication errors', async () => {
-      const mockHandler = http.get(metricsEndpoint, async () => {
+      const mockHandler = http.post(metricsEndpoint, async () => {
         return HttpResponse.json(
-          { errors: ['Authentication failed'] },
+          { message: 'Authentication failed' },
           { status: 403 },
         )
       })
@@ -172,7 +149,7 @@ describe('Metrics Tool', () => {
         const request = createMockToolRequest('query_metrics', {
           from: 1640995000,
           to: 1641095000,
-          query: 'avg:system.cpu.user{*}',
+          query: 'system_cpu_user',
         })
         await expect(toolHandlers.query_metrics(request)).rejects.toThrow()
       })()
@@ -181,9 +158,9 @@ describe('Metrics Tool', () => {
     })
 
     it('should handle rate limit errors', async () => {
-      const mockHandler = http.get(metricsEndpoint, async () => {
+      const mockHandler = http.post(metricsEndpoint, async () => {
         return HttpResponse.json(
-          { errors: ['Rate limit exceeded'] },
+          { message: 'Rate limit exceeded' },
           { status: 429 },
         )
       })
@@ -194,7 +171,7 @@ describe('Metrics Tool', () => {
         const request = createMockToolRequest('query_metrics', {
           from: 1640995000,
           to: 1641095000,
-          query: 'avg:system.cpu.user{*}',
+          query: 'system_cpu_user',
         })
         await expect(toolHandlers.query_metrics(request)).rejects.toThrow(
           'Rate limit exceeded',
@@ -205,9 +182,9 @@ describe('Metrics Tool', () => {
     })
 
     it('should handle invalid time range errors', async () => {
-      const mockHandler = http.get(metricsEndpoint, async () => {
+      const mockHandler = http.post(metricsEndpoint, async () => {
         return HttpResponse.json(
-          { errors: ['Time range exceeds allowed limit'] },
+          { message: 'Time range exceeds allowed limit' },
           { status: 400 },
         )
       })
@@ -219,7 +196,7 @@ describe('Metrics Tool', () => {
         const request = createMockToolRequest('query_metrics', {
           from: 1600000000, // Very old date
           to: 1700000000, // Very recent date
-          query: 'avg:system.cpu.user{*}',
+          query: 'system_cpu_user',
         })
         await expect(toolHandlers.query_metrics(request)).rejects.toThrow(
           'Time range exceeds allowed limit',

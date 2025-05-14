@@ -1,14 +1,14 @@
 import { z } from 'zod'
 
 export const GetLogsZodSchema = z.object({
-  query: z.string().default('').describe('Datadog logs query string'),
+  query: z.string().describe('Coralogix logs query string'),
   from: z.number().describe('Start time in epoch seconds'),
   to: z.number().describe('End time in epoch seconds'),
   limit: z
     .number()
+    .describe('Maximum number of logs to return')
     .optional()
-    .default(100)
-    .describe('Maximum number of logs to return. Default is 100.'),
+    .default(100),
 })
 
 /**
@@ -23,13 +23,14 @@ export const GetLogsZodSchema = z.object({
 export const GetAllServicesZodSchema = z.object({
   query: z
     .string()
-    .default('*')
-    .describe('Optional query filter for log search'),
+    .describe('Coralogix logs query string')
+    .optional()
+    .default('*'),
   from: z.number().describe('Start time in epoch seconds'),
   to: z.number().describe('End time in epoch seconds'),
   limit: z
     .number()
+    .describe('Maximum number of logs to return for service extraction')
     .optional()
-    .default(1000)
-    .describe('Maximum number of logs to search through. Default is 1000.'),
+    .default(1000),
 })

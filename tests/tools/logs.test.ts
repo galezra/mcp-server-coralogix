@@ -1,52 +1,41 @@
-import { v2 } from '@datadog/datadog-api-client'
 import { describe, it, expect } from 'vitest'
-import { createDatadogConfig } from '../../src/utils/datadog'
+import { createCoralogixConfig } from '../../src/utils/config'
+import { LogsApiClient } from '../../src/utils/coralogix'
 import { createLogsToolHandlers } from '../../src/tools/logs/tool'
 import { createMockToolRequest } from '../helpers/mock'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from '../helpers/msw'
-import { baseUrl, DatadogToolResponse } from '../helpers/datadog'
+import { baseUrl, CoralogixToolResponse } from '../helpers/coralogix'
 
-const logsEndpoint = `${baseUrl}/v2/logs/events/search`
+const logsEndpoint = `${baseUrl}/logs/search`
 
 describe('Logs Tool', () => {
-  if (!process.env.DATADOG_API_KEY || !process.env.DATADOG_APP_KEY) {
-    throw new Error('DATADOG_API_KEY and DATADOG_APP_KEY must be set')
-  }
-
-  const datadogConfig = createDatadogConfig({
-    apiKeyAuth: process.env.DATADOG_API_KEY,
-    appKeyAuth: process.env.DATADOG_APP_KEY,
-    site: process.env.DATADOG_SITE,
+  // Create a mock Coralogix API client
+  const axiosInstance = createCoralogixConfig({
+    apiKey: 'test-api-key',
+    region: 'EUROPE',
   })
+  
+  const apiClient = new LogsApiClient(axiosInstance)
+  const toolHandlers = createLogsToolHandlers(apiClient)
 
-  const apiInstance = new v2.LogsApi(datadogConfig)
-  const toolHandlers = createLogsToolHandlers(apiInstance)
-
-  // https://docs.datadoghq.com/api/latest/logs/#search-logs
   describe.concurrent('get_logs', async () => {
     it('should retrieve logs', async () => {
-      // Mock API response based on Datadog API documentation
+      // Mock API response based on Coralogix API
       const mockHandler = http.post(logsEndpoint, async () => {
         return HttpResponse.json({
-          data: [
+          logs: [
             {
-              id: 'AAAAAXGLdD0AAABPV-5whqgB',
-              attributes: {
-                timestamp: 1640995199999,
-                status: 'info',
-                message: 'Test log message',
-                service: 'test-service',
-                tags: ['env:test'],
-              },
-              type: 'log',
+              id: 'log-id-1',
+              timestamp: 1640995199999,
+              severity: 'INFO',
+              message: 'Test log message',
+              service: 'test-service',
+              tags: ['env:test'],
             },
           ],
-          meta: {
-            page: {
-              after:
-                'eyJzdGFydEF0IjoiQVFBQUFYR0xkRDBBQUFCUFYtNXdocWdCIiwiaW5kZXgiOiJtYWluIn0=',
-            },
+          pagination: {
+            next: 'next-token',
           },
         })
       })
@@ -62,7 +51,7 @@ describe('Logs Tool', () => {
         })
         const response = (await toolHandlers.get_logs(
           request,
-        )) as unknown as DatadogToolResponse
+        )) as unknown as CoralogixToolResponse
         expect(response.content[0].text).toContain('Logs data')
         expect(response.content[0].text).toContain('Test log message')
       })()
@@ -73,10 +62,8 @@ describe('Logs Tool', () => {
     it('should handle empty response', async () => {
       const mockHandler = http.post(logsEndpoint, async () => {
         return HttpResponse.json({
-          data: [],
-          meta: {
-            page: {},
-          },
+          logs: [],
+          pagination: {},
         })
       })
 
@@ -90,7 +77,7 @@ describe('Logs Tool', () => {
         })
         const response = (await toolHandlers.get_logs(
           request,
-        )) as unknown as DatadogToolResponse
+        )) as unknown as CoralogixToolResponse
         expect(response.content[0].text).toContain('Logs data')
         expect(response.content[0].text).toContain('[]')
       })()
@@ -101,10 +88,7 @@ describe('Logs Tool', () => {
     it('should handle null response data', async () => {
       const mockHandler = http.post(logsEndpoint, async () => {
         return HttpResponse.json({
-          data: null,
-          meta: {
-            page: {},
-          },
+          logs: null,
         })
       })
 
@@ -127,7 +111,7 @@ describe('Logs Tool', () => {
     it('should handle authentication errors', async () => {
       const mockHandler = http.post(logsEndpoint, async () => {
         return HttpResponse.json(
-          { errors: ['Authentication failed'] },
+          { message: 'Authentication failed' },
           { status: 403 },
         )
       })
@@ -149,7 +133,7 @@ describe('Logs Tool', () => {
     it('should handle rate limit errors', async () => {
       const mockHandler = http.post(logsEndpoint, async () => {
         return HttpResponse.json(
-          { errors: ['Rate limit exceeded'] },
+          { message: 'Rate limit exceeded' },
           { status: 429 },
         )
       })
@@ -173,7 +157,7 @@ describe('Logs Tool', () => {
     it('should handle server errors', async () => {
       const mockHandler = http.post(logsEndpoint, async () => {
         return HttpResponse.json(
-          { errors: ['Internal server error'] },
+          { message: 'Internal server error' },
           { status: 500 },
         )
       })
@@ -200,123 +184,40 @@ describe('Logs Tool', () => {
       // Mock API response with multiple services
       const mockHandler = http.post(logsEndpoint, async () => {
         return HttpResponse.json({
-          data: [
+          logs: [
             {
-              id: 'AAAAAXGLdD0AAABPV-5whqgB',
-              attributes: {
-                timestamp: 1640995199000,
-                status: 'info',
-                message: 'Test log message 1',
-                service: 'web-service',
-                tags: ['env:test'],
-              },
-              type: 'log',
+              id: 'log-id-1',
+              timestamp: 1640995199000,
+              severity: 'INFO',
+              message: 'Test log message 1',
+              service: 'web-service',
+              tags: ['env:test'],
             },
             {
-              id: 'AAAAAXGLdD0AAABPV-5whqgC',
-              attributes: {
-                timestamp: 1640995198000,
-                status: 'info',
-                message: 'Test log message 2',
-                service: 'api-service',
-                tags: ['env:test'],
-              },
-              type: 'log',
+              id: 'log-id-2',
+              timestamp: 1640995198000,
+              severity: 'INFO',
+              message: 'Test log message 2',
+              service: 'api-service',
+              tags: ['env:test'],
             },
             {
-              id: 'AAAAAXGLdD0AAABPV-5whqgD',
-              attributes: {
-                timestamp: 1640995197000,
-                status: 'info',
-                message: 'Test log message 3',
-                service: 'web-service', // Duplicate service to test uniqueness
-                tags: ['env:test'],
-              },
-              type: 'log',
+              id: 'log-id-3',
+              timestamp: 1640995197000,
+              severity: 'INFO',
+              message: 'Test log message 3',
+              service: 'web-service', // Duplicate service to test uniqueness
+              tags: ['env:test'],
             },
             {
-              id: 'AAAAAXGLdD0AAABPV-5whqgE',
-              attributes: {
-                timestamp: 1640995196000,
-                status: 'error',
-                message: 'Test error message',
-                service: 'database-service',
-                tags: ['env:test'],
-              },
-              type: 'log',
+              id: 'log-id-4',
+              timestamp: 1640995196000,
+              severity: 'ERROR',
+              message: 'Test error message',
+              service: 'database-service',
+              tags: ['env:test'],
             },
           ],
-          meta: {
-            page: {},
-          },
-        })
-      })
-
-      const server = setupServer(mockHandler)
-
-      await server.boundary(async () => {
-        const request = createMockToolRequest('get_all_services', {
-          query: '*',
-          from: 1640995100, // epoch seconds
-          to: 1640995200, // epoch seconds
-          limit: 100,
-        })
-        const response = (await toolHandlers.get_all_services(
-          request,
-        )) as unknown as DatadogToolResponse
-
-        expect(response.content[0].text).toContain('Services')
-        // Check if response contains the expected services (sorted alphabetically)
-        const expected = ['api-service', 'database-service', 'web-service']
-        expected.forEach((service) => {
-          expect(response.content[0].text).toContain(service)
-        })
-
-        // Check that we've extracted unique services (no duplicates)
-        const servicesText = response.content[0].text
-        const servicesJson = JSON.parse(
-          servicesText.substring(
-            servicesText.indexOf('['),
-            servicesText.lastIndexOf(']') + 1,
-          ),
-        )
-        expect(servicesJson).toHaveLength(3) // Only 3 unique services, not 4
-        expect(servicesJson).toEqual(expected)
-      })()
-
-      server.close()
-    })
-
-    it('should handle logs with missing service attributes', async () => {
-      const mockHandler = http.post(logsEndpoint, async () => {
-        return HttpResponse.json({
-          data: [
-            {
-              id: 'AAAAAXGLdD0AAABPV-5whqgB',
-              attributes: {
-                timestamp: 1640995199000,
-                status: 'info',
-                message: 'Test log message 1',
-                service: 'web-service',
-                tags: ['env:test'],
-              },
-              type: 'log',
-            },
-            {
-              id: 'AAAAAXGLdD0AAABPV-5whqgC',
-              attributes: {
-                timestamp: 1640995198000,
-                status: 'info',
-                message: 'Test log message with no service',
-                // No service attribute
-                tags: ['env:test'],
-              },
-              type: 'log',
-            },
-          ],
-          meta: {
-            page: {},
-          },
         })
       })
 
@@ -327,36 +228,26 @@ describe('Logs Tool', () => {
           query: '*',
           from: 1640995100,
           to: 1640995200,
-          limit: 100,
         })
         const response = (await toolHandlers.get_all_services(
           request,
-        )) as unknown as DatadogToolResponse
-
+        )) as unknown as CoralogixToolResponse
         expect(response.content[0].text).toContain('Services')
-        expect(response.content[0].text).toContain('web-service')
-
-        // Ensure we only have one service (the one with a defined service attribute)
-        const servicesText = response.content[0].text
-        const servicesJson = JSON.parse(
-          servicesText.substring(
-            servicesText.indexOf('['),
-            servicesText.lastIndexOf(']') + 1,
-          ),
+        // Verify that the services are unique and sorted
+        expect(response.content[0].text).toContain(
+          JSON.stringify(['api-service', 'database-service', 'web-service']),
         )
-        expect(servicesJson).toHaveLength(1)
       })()
 
       server.close()
     })
 
-    it('should handle empty response data', async () => {
-      const mockHandler = http.post(logsEndpoint, async () => {
+    it('should handle services API', async () => {
+      // Mock services API response
+      const servicesEndpoint = `${baseUrl}/services`
+      const mockHandler = http.get(servicesEndpoint, async () => {
         return HttpResponse.json({
-          data: [],
-          meta: {
-            page: {},
-          },
+          services: ['auth-service', 'api-service', 'web-service'],
         })
       })
 
@@ -364,17 +255,60 @@ describe('Logs Tool', () => {
 
       await server.boundary(async () => {
         const request = createMockToolRequest('get_all_services', {
-          query: 'service:non-existent',
           from: 1640995100,
           to: 1640995200,
-          limit: 100,
         })
         const response = (await toolHandlers.get_all_services(
           request,
-        )) as unknown as DatadogToolResponse
-
+        )) as unknown as CoralogixToolResponse
         expect(response.content[0].text).toContain('Services')
-        expect(response.content[0].text).toContain('[]') // Empty array of services
+        expect(response.content[0].text).toContain(
+          JSON.stringify(['api-service', 'auth-service', 'web-service']),
+        )
+      })()
+
+      server.close()
+    })
+
+    it('should handle empty response from services API', async () => {
+      // Mock services API with empty response
+      const servicesEndpoint = `${baseUrl}/services`
+      const mockServicesHandler = http.get(servicesEndpoint, async () => {
+        return HttpResponse.json({
+          services: [],
+        })
+      })
+
+      // Mock logs API as fallback
+      const logsHandler = http.post(logsEndpoint, async () => {
+        return HttpResponse.json({
+          logs: [
+            {
+              id: 'log-id-1',
+              timestamp: 1640995199000,
+              severity: 'INFO',
+              message: 'Fallback log',
+              service: 'fallback-service',
+              tags: ['env:test'],
+            },
+          ],
+        })
+      })
+
+      const server = setupServer(mockServicesHandler, logsHandler)
+
+      await server.boundary(async () => {
+        const request = createMockToolRequest('get_all_services', {
+          from: 1640995100,
+          to: 1640995200,
+        })
+        const response = (await toolHandlers.get_all_services(
+          request,
+        )) as unknown as CoralogixToolResponse
+        expect(response.content[0].text).toContain('Services')
+        expect(response.content[0].text).toContain(
+          JSON.stringify(['fallback-service']),
+        )
       })()
 
       server.close()

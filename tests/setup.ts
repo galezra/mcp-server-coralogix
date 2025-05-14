@@ -1,7 +1,8 @@
 import { afterEach, vi } from 'vitest'
 
-process.env.DATADOG_API_KEY = 'test-api-key'
-process.env.DATADOG_APP_KEY = 'test-app-key'
+// Set up test environment variables
+process.env.CORALOGIX_API_KEY = 'cxup_yr67ZMacapGCDDZZN6UYKLEELWYSJH'
+process.env.CORALOGIX_REGION = 'EUROPE'
 
 // Reset handlers after each test
 afterEach(() => {

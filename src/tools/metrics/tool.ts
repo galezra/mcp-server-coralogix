@@ -1,7 +1,7 @@
 import { ExtendedTool, ToolHandlers } from '../../utils/types'
-import { v1 } from '@datadog/datadog-api-client'
 import { createToolSchema } from '../../utils/tool'
 import { QueryMetricsZodSchema } from './schema'
+import { MetricsApiClient } from '../../utils/coralogix'
 
 type MetricsToolName = 'query_metrics'
 type MetricsTool = ExtendedTool<MetricsToolName>
@@ -10,35 +10,37 @@ export const METRICS_TOOLS: MetricsTool[] = [
   createToolSchema(
     QueryMetricsZodSchema,
     'query_metrics',
-    'Query timeseries points of metrics from Datadog',
+    'Retrieve metrics data from Coralogix',
   ),
 ] as const
 
 type MetricsToolHandlers = ToolHandlers<MetricsToolName>
 
 export const createMetricsToolHandlers = (
-  apiInstance: v1.MetricsApi,
-): MetricsToolHandlers => {
-  return {
-    query_metrics: async (request) => {
-      const { from, to, query } = QueryMetricsZodSchema.parse(
-        request.params.arguments,
-      )
+  apiClient: MetricsApiClient,
+): MetricsToolHandlers => ({
+  query_metrics: async (request) => {
+    const { query, from, to } = QueryMetricsZodSchema.parse(
+      request.params.arguments,
+    )
 
-      const response = await apiInstance.queryMetrics({
-        from,
-        to,
-        query,
-      })
+    const response = await apiClient.queryMetrics({
+      query,
+      from,
+      to,
+    })
 
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Queried metrics data: ${JSON.stringify({ response })}`,
-          },
-        ],
-      }
-    },
-  }
-}
+    if (!response) {
+      throw new Error('No metrics data returned')
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Metrics data: ${JSON.stringify(response)}`,
+        },
+      ],
+    }
+  },
+})
